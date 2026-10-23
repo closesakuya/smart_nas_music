@@ -1,0 +1,41 @@
+import { test, expect } from "@playwright/test";
+test.use({ baseURL: "http://127.0.0.1:8765", launchOptions: { channel: "chrome" } });
+
+test("hero button and refreshed cover play their displayed album, not random discovery tracks", async ({ page }) => {
+  let refresh = 0;
+  const song = (id: string, albumArtist: string) => ({ id, title: `Song ${id}`, artist: albumArtist, album: "Same Album Title", album_artist: albumArtist, duration: 30, format: "WAV", cover: null, available: 1, tags: {}, metadata: {}, ai_tags: {}, folder: albumArtist });
+  const albums = ["Artist A", "Artist B"].map(artist => ({ album: "Same Album Title", album_artist: artist, artist, cover: null, count: 2, year: "2026" }));
+  const albumRequests: string[] = [];
+  const wav = Buffer.alloc(44 + 44100 * 2 * 2 * 30);
+  wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(2, 22);
+  wav.writeUInt32LE(44100, 24); wav.writeUInt32LE(176400, 28); wav.writeUInt16LE(4, 32); wav.writeUInt16LE(16, 34);
+  wav.write("data", 36); wav.writeUInt32LE(wav.length - 44, 40);
+  await page.route("**/api/albums?**", route => route.fulfill({ json: [albums[Math.min(refresh++, 1)]] }));
+  await page.route("**/api/tracks?**", route => {
+    const params = new URL(route.request().url()).searchParams;
+    const artist = params.get("album_artist");
+    if (artist) albumRequests.push(artist);
+    const songs = artist ? [song(artist === "Artist A" ? "a1" : "b1", artist), song(artist === "Artist A" ? "a2" : "b2", artist)] : [song("unrelated", "Unrelated random artist")];
+    return route.fulfill({ json: { items: songs, total: songs.length } });
+  });
+  await page.route("**/api/tracks/*/stream?**", route => route.fulfill({ contentType: "audio/wav", body: wav }));
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto("/");
+  await page.locator("input[name=username]").fill(process.env.APP_USERNAME || "admin");
+  await page.locator("input[name=password]").fill(process.env.APP_PASSWORD || "");
+  await page.getByRole("button", { name: "进入音乐空间" }).click();
+  await expect(page.locator(".hero-album small")).toHaveText("Artist A");
+  await page.getByRole("button", { name: "开始聆听", exact: true }).click();
+  await expect(page.locator("audio")).toHaveAttribute("src", /\/a1\/stream/);
+  const queueIds = () => page.evaluate(() => JSON.parse(localStorage.getItem("summer-queue") || "[]").map((t: any) => t.id));
+  await expect.poll(queueIds).toEqual(["a1", "a2"]);
+  await page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.pause());
+  await page.getByTitle("刷新页面数据").click();
+  await expect(page.locator(".hero-album small")).toHaveText("Artist B");
+  await page.getByRole("button", { name: "播放封面专辑：Same Album Title", exact: true }).click();
+  await expect(page.locator("audio")).toHaveAttribute("src", /\/b1\/stream/);
+  await expect.poll(queueIds).toEqual(["b1", "b2"]);
+  expect(albumRequests).toEqual(["Artist A", "Artist B"]);
+  await page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.pause());
+});
