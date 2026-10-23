@@ -45,6 +45,7 @@ import { isNative, bindNativeAudio, nativeError } from "./nativeAudio";
 import { RecommendationCard, type QueueAction } from "./RecommendationCard";
 import { nextInspirations } from "./inspiration";
 import { SimilarityPanel, type SimilarResult } from "./SimilarityPanel";
+import { OnlineMetadata } from "./OnlineMetadata";
 
 type Track = {
   id: string;
@@ -232,8 +233,12 @@ function App() {
   const [messages, setMessages] = useState<Chat[]>([]),
     [input, setInput] = useState(""),
     [chatBusy, setChatBusy] = useState(false),
-    [settings, setSettings] = useState<Record<string, unknown> | null>(null),
-    [online, setOnline] = useState<unknown>(null);
+    [settings, setSettings] = useState<Record<string, unknown> | null>(null);
+  const [queueSelection, setQueueSelection] = useState<Set<string>>(new Set());
+  const selectedQueueTracks = queue.filter(t => queueSelection.has(t.id));
+  useEffect(() => {
+    setQueueSelection(previous => new Set([...previous].filter(id => queue.some(t => t.id === id))));
+  }, [queue]);
   const audio = useRef<HTMLAudioElement>(null),
     wantPlay = useRef(false),
     restorePosition = useRef(0),
@@ -297,7 +302,6 @@ function App() {
     if (!logged) return;
     let active = true;
     setLoading(true);
-    setOnline(null);
     (async () => {
       if (view === "settings") {
         const s = await api<Record<string, unknown>>("/settings");
@@ -567,7 +571,7 @@ function App() {
         track_ids: list.map((t) => t.id),
         expected_revision: p.revision,
       });
-      setSelected(result);
+      if (view === "playlist:" + p.id) setSelected(result);
       if (view === "playlist:" + p.id) setTracks(result.tracks || []);
       setRefresh((n) => n + 1);
       notify("歌单已更新，可撤销");
@@ -759,7 +763,6 @@ function App() {
             className="album-col text-ellipsis subtle-button"
             onClick={() => {
               setDetail(t);
-              setOnline(null);
             }}
           >
             {t.album}
@@ -795,7 +798,6 @@ function App() {
               title="歌曲详情"
               onClick={() => {
                 setDetail(t);
-                setOnline(null);
               }}
             >
               <MoreHorizontal size={18} />
@@ -1771,7 +1773,6 @@ function App() {
                 title="歌曲详情"
                 onClick={() => {
                   setDetail(current);
-                  setOnline(null);
                 }}
               >
                 <Cover cover={current.cover} title={current.album} />
@@ -1782,6 +1783,7 @@ function App() {
                 <small>{sourceQuality(current)}</small>
               </div>
               <button className="icon-button" title="根据当前歌曲推荐相似音乐" onClick={() => setSimilarSeeds({ tracks: [current], label: current.title + " · " + current.artist })}><Sparkles size={17} /></button>
+              <button className="icon-button add-current-playlist" title="当前歌曲加入歌单" aria-label="当前歌曲加入歌单" onClick={() => setAddTrack(current)}><ListMusic size={18} /></button>
               <button
                 className={"icon-button " + (current.favorite ? "liked" : "")}
                 onClick={() => favorite(current)}
@@ -2017,6 +2019,11 @@ function App() {
               清空
             </button>
           </div>
+          <div className="queue-selection-toolbar">
+            <label><input type="checkbox" aria-label="全选播放队列" disabled={!queue.length} checked={queue.length > 0 && selectedQueueTracks.length === queue.length} onChange={e => setQueueSelection(e.target.checked ? new Set(queue.map(t => t.id)) : new Set())} />全选</label>
+            <span>已选 {selectedQueueTracks.length} 首</span>
+            <button className="text-button" disabled={!selectedQueueTracks.length} onClick={() => setAddTracks(selectedQueueTracks)}><ListMusic size={15} />加入歌单</button>
+          </div>
           <div className="queue-scroll">
             {queue.slice(queuePage * 100, queuePage * 100 + 100).map((t, j) => {
               const i = queuePage * 100 + j;
@@ -2025,7 +2032,11 @@ function App() {
                   className={"queue-item " + (i === index ? "active" : "")}
                   key={t.id + i}
                 >
-                  <button onClick={() => play(queue, i)}>
+                  <input type="checkbox" aria-label={`选择队列歌曲 ${t.title}`} checked={queueSelection.has(t.id)} onChange={e => {
+                    const checked = e.target.checked;
+                    setQueueSelection(previous => { const next = new Set(previous); if (checked) next.add(t.id); else next.delete(t.id); return next; });
+                  }} />
+                  <button className="queue-song" onClick={() => play(queue, i)}>
                     <Cover cover={t.cover} title={t.album} />
                     <span>
                       <strong>{t.title}</strong>
@@ -2137,17 +2148,8 @@ function App() {
                 <Sparkles size={16} />
                 AI 标签
               </button>
-              <button
-                className="secondary"
-                onClick={() =>
-                  api("/tracks/" + detail.id + "/online", "POST")
-                    .then(setOnline)
-                    .catch((e) => notify(e.message))
-                }
-              >
-                联网资料
-              </button>
             </div>
+            <OnlineMetadata key={detail.id} load={() => api("/tracks/" + detail.id + "/online", "POST")} />
             <h3>
               AI 标签 <small>基于元数据推断</small>
             </h3>
@@ -2163,12 +2165,6 @@ function App() {
               </div>
             ) : (
               <p className="muted">尚未生成。原始元数据始终保留。</p>
-            )}
-            {!!online && (
-              <details open>
-                <summary>联网候选资料（不自动覆盖）</summary>
-                <pre>{JSON.stringify(online, null, 2)}</pre>
-              </details>
             )}
             <details open>
               <summary>专业音乐信息</summary>

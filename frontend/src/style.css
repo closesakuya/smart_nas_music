@@ -1615,7 +1615,7 @@ summary {
 .queue-item.active {
   background: #e8efdd;
 }
-.queue-item > button:first-child {
+.queue-item > .queue-song {
   flex: 1;
   display: flex;
   align-items: center;
@@ -2725,6 +2725,14 @@ pre {
 .similar-online { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 16px 0; }
 .similar-summary { font-size: 13px; line-height: 1.8; margin: 16px 0; }
 .similar-error { color: #a34336; margin: 16px 0; font-size: 13px; }
+.queue-selection-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 0; font-size: 12px; }
+.queue-selection-toolbar label { display: flex; align-items: center; gap: 6px; }
+.queue-selection-toolbar .text-button { margin-left: auto; }
+.queue-item > input { flex: 0 0 auto; accent-color: var(--green); }
+.now-playing > .add-current-playlist { display: inline-flex; flex-shrink: 0; }
+.online-metadata { margin: 16px 0; }
+.online-results article { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.online-results article p { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .external-recommendations article { border: 1px solid #dce5d3; border-radius: 12px; padding: 16px; margin: 10px 0; background: #f7faf3; }
 .external-recommendations h4 { margin: 8px 0; }
 .external-recommendations p, .external-recommendations small { font-size: 12px; line-height: 1.8; }

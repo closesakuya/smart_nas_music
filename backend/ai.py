@@ -34,23 +34,31 @@ async def complete(messages, kind='chat'):
             response = await client.post(os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').rstrip('/') + '/chat/completions',
                 headers={'Authorization': f'Bearer {key}'}, json={
                     'model': os.getenv('DEEPSEEK_MODEL', 'deepseek-flash'), 'messages': messages,
+                    **({'thinking': {'type': 'disabled'}} if kind.startswith('similar-web-') else {}),
                     'response_format': {'type': 'json_object'},
                     'max_tokens': int(os.getenv('AI_MAX_TOKENS', '4096'))})
             if response.status_code != 200:
                 raise HTTPException(502, f'AI 服务返回 HTTP {response.status_code}，请检查额度、模型或配置')
             data = response.json()
-        content = data['choices'][0]['message']['content']
-        content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip())
-        result = json.loads(content)
-        if not isinstance(result, dict):
-            raise ValueError('AI 响应不是对象')
         usage = data.get('usage', {})
         with connect() as db:
             db.execute('UPDATE ai_usage SET input_tokens=?,output_tokens=? WHERE id=?',
                        (usage.get('prompt_tokens', 0), usage.get('completion_tokens', 0), usage_id))
+        choice = data['choices'][0]
+        if choice.get('finish_reason') == 'length':
+            raise HTTPException(502, 'AI 输出达到长度上限，结果不完整；请减少参考歌曲或提高 AI_MAX_TOKENS 后重试')
+        content = choice['message']['content']
+        if not isinstance(content, str):
+            raise ValueError('AI 响应内容为空')
+        content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip())
+        result = json.loads(content)
+        if not isinstance(result, dict):
+            raise ValueError('AI 响应不是对象')
         return result
     except HTTPException:
         raise
+    except httpx.TimeoutException:
+        raise HTTPException(504, 'DeepSeek 响应超时，请稍后重试；已有歌单未改变')
     except (httpx.HTTPError, ValueError, KeyError, IndexError):
         raise HTTPException(502, 'AI 响应不可用，请稍后重试；已有歌单未改变')
 
@@ -199,9 +207,8 @@ async def online_metadata(track):
     async with mb_lock:
         await asyncio.sleep(1.1)
         contact = os.getenv('MUSICBRAINZ_CONTACT_URL', '')
-        if not contact:
-            raise HTTPException(422, '请在 .env 设置 MUSICBRAINZ_CONTACT_URL（你的联系邮箱或项目网址）')
-        async with httpx.AsyncClient(timeout=30) as client:
+        contact = contact or 'https://github.com/closesakuya/smart_nas_music'
+        async with httpx.AsyncClient(timeout=8) as client:
             # Quote characters are removed from Lucene literals; no client-supplied query operators.
             title = re.sub(r'["\\]', ' ', track['title'])
             artist = re.sub(r'["\\]', ' ', track['artist'])
@@ -212,7 +219,14 @@ async def online_metadata(track):
                 response.raise_for_status()
                 data = response.json()
             except (httpx.HTTPError, ValueError):
-                raise HTTPException(502, '联网资料源暂不可用，请稍后重试')
+                # Search returns actual source excerpts, never invented catalogue records.
+                from .similar import search_web
+                try:
+                    sources = await search_web(f'{track["artist"]} {track["title"]} {track["album"]} 歌曲 专辑')
+                except HTTPException as error:
+                    raise HTTPException(error.status_code, 'MusicBrainz 连接失败；备用联网搜索：' + str(error.detail)) from error
+                return {'source': 'web', 'matches': [], 'sources': sources, 'auto_applied': False,
+                        'message': 'MusicBrainz 暂不可用，已改用联网搜索。以下为网页资料，尚未匹配为权威录音信息，不会改写音乐标签。'}
         result = {'source': 'musicbrainz', 'matches': data.get('recordings', []), 'auto_applied': False}
         with connect() as db:
             db.execute('INSERT OR REPLACE INTO enrichment_cache(key,payload) VALUES(?,?)', (key, json.dumps(result, ensure_ascii=False)))
