@@ -202,6 +202,12 @@ def get_track(track_id):
     return track_dict(row)
 
 
+@app.get('/api/tracks/{track_id}/lyrics')
+def track_lyrics(track_id: str):
+    from .lyrics import read_lyrics
+    return read_lyrics(get_track(track_id))
+
+
 @app.get('/api/tracks/{track_id}')
 def track(track_id: str):
     return get_track(track_id)

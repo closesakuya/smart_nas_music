@@ -31,7 +31,7 @@ test("hero button and refreshed cover play their displayed album, not random dis
   const queueIds = () => page.evaluate(() => JSON.parse(localStorage.getItem("summer-queue") || "[]").map((t: any) => t.id));
   await expect.poll(queueIds).toEqual(["a1", "a2"]);
   await page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.pause());
-  await page.getByTitle("刷新页面数据").click();
+  await page.getByTitle("刷新此刻推荐").click();
   await expect(page.locator(".hero-album small")).toHaveText("Artist B");
   await page.getByRole("button", { name: "播放封面专辑：Same Album Title", exact: true }).click();
   await expect(page.locator("audio")).toHaveAttribute("src", /\/b1\/stream/);

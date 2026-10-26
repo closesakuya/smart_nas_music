@@ -46,6 +46,8 @@ import { RecommendationCard, type QueueAction } from "./RecommendationCard";
 import { nextInspirations } from "./inspiration";
 import { SimilarityPanel, type SimilarResult } from "./SimilarityPanel";
 import { OnlineMetadata } from "./OnlineMetadata";
+import { ReorderHandle, moveItem } from "./ReorderHandle";
+import { LyricsPanel } from "./LyricsPanel";
 
 type Track = {
   id: string;
@@ -249,6 +251,34 @@ function App() {
   const [inspirations, setInspirations] = useState(() => nextInspirations());
   const [featuredBusy, setFeaturedBusy] = useState(false);
   const [homeRecommendationType, setHomeRecommendationType] = useState("tracks");
+  const [discoveryAlbums, setDiscoveryAlbums] = useState<Album[]>([]);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false), [heroBusy, setHeroBusy] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const locationRef = useRef(''); locationRef.current = view + '|' + query;
+  async function refreshHomePart(part: 'hero' | 'discovery') {
+    if (part === 'hero' ? heroBusy : discoveryBusy) return;
+    const location = locationRef.current;
+    const busy = part === 'hero' ? setHeroBusy : setDiscoveryBusy;
+    busy(true);
+    try {
+      if (part === 'hero') {
+        const result = await api<Album[]>('/albums?sort=random');
+        if (locationRef.current === location) setAlbums(result);
+      } else if (homeRecommendationType === 'albums') {
+        const result = await api<Album[]>('/albums?sort=random');
+        if (locationRef.current === location) setDiscoveryAlbums(result);
+      } else {
+        const result = await api<{ items: Track[]; total: number }>('/tracks?sort=random&limit=100');
+        if (locationRef.current === location) { setTracks(result.items); setTotal(result.total); }
+      }
+    } catch (e) { notify((e as Error).message); } finally { busy(false); }
+  }
+  function reorderQueue(from: number, to: number) {
+    const next = moveItem(queue, from, to);
+    if (next === queue) return;
+    setQueue(next);
+    setIndex(index === from ? to : from < index && to >= index ? index - 1 : from > index && to <= index ? index + 1 : index);
+  }
   const [similarSeeds, setSimilarSeeds] = useState<{ tracks: Track[]; label: string } | null>(null);
   const setAddTrack = (track: Track | null) => setAddTracks(track ? [track] : null);
   const notify = (text: string) => setToast(text);
@@ -342,6 +372,7 @@ function App() {
         const a = await api<Album[]>("/albums?q=" + encodeURIComponent(query) + (view === "home" ? "&sort=random" : ""));
         if (active) {
           setAlbums(a);
+          if (view === 'home') setDiscoveryAlbums(a);
           setMoreAlbums(a.length === 60);
         }
       }
@@ -396,7 +427,7 @@ function App() {
   useEffect(() => {
     if (detail && !stats?.tags.running)
       api<Track>("/tracks/" + detail.id)
-        .then(setDetail)
+        .then(updated => setDetail(open => open?.id === updated.id ? updated : open))
         .catch(() => {});
   }, [detail?.id, stats?.tags.running, stats?.tags.done]);
   useEffect(() => {
@@ -716,7 +747,7 @@ function App() {
     { id: "recent", icon: History, label: "最近播放" },
   ];
   const trackRows = (list: Track[], compact = false) => (
-    <div className={"track-list " + (compact ? "compact" : "")}>
+    <div className={"track-list " + (compact ? "compact" : "")} data-reorder-group="playlist">
       <div className="table-head">
         <span>#</span>
         <span>歌曲 / 艺术家</span>
@@ -733,6 +764,7 @@ function App() {
             (!t.available ? " unavailable" : "")
           }
           key={t.id}
+          data-reorder-index={i}
           onDoubleClick={() => play(list, i)}
         >
           <button
@@ -804,6 +836,7 @@ function App() {
             </button>
             {selected && (
               <>
+                <ReorderHandle index={i} count={list.length} onMove={(from, to) => { if (from !== to) void savePlaylist(selected, moveItem(list, from, to)); }} />
                 <button
                   className="icon-button"
                   title="上移"
@@ -1077,11 +1110,11 @@ function App() {
             {view !== "settings" && (
               <button
                 className="icon-button refresh-button"
-                title="刷新页面数据"
-                disabled={loading || featuredBusy}
-                onClick={() => { if (view === "home") setInspirations(previous => nextInspirations(previous)); setRefresh((n) => n + 1); notify(view === "home" ? "正在换一批专辑、歌曲与灵感…" : "正在刷新页面数据…"); }}
+                title={view === 'home' ? '刷新此刻推荐' : '刷新页面数据'}
+                disabled={loading || featuredBusy || heroBusy}
+                onClick={() => { if (view === 'home' && !query) void refreshHomePart('hero'); else setRefresh(n => n + 1); }}
               >
-                <RefreshCw size={18} className={loading ? "spin" : ""} />
+                <RefreshCw size={18} className={loading || heroBusy ? "spin" : ""} />
               </button>
             )}
           </div>
@@ -1496,6 +1529,7 @@ function App() {
                   </div>
                   <div className="list-toolbar">
                     {view === "home" && !query && <select aria-label="首页推荐类型" value={homeRecommendationType} onChange={e => setHomeRecommendationType(e.target.value)}><option value="tracks">随机歌曲</option><option value="albums">随机专辑</option></select>}
+                    {view === 'home' && !query && <button className="icon-button" title="刷新随机发现" disabled={loading || discoveryBusy} onClick={() => void refreshHomePart('discovery')}><RefreshCw size={17} className={discoveryBusy ? 'spin' : ''} /></button>}
                     <button className="text-button" onClick={playAll} hidden={view === "home" && !query && homeRecommendationType === "albums"}>
                       <Play size={15} />
                       播放{view === "home" ? "" : "全部"}
@@ -1575,7 +1609,7 @@ function App() {
                     正在打开音乐收藏…
                   </div>
                 ) : view === "home" && !query && homeRecommendationType === "albums" ? (
-                  <div className="album-grid random-albums">{albums.slice(0, 12).map(a => <article className="random-album" key={a.album + "|" + a.album_artist}>
+                  <div className="album-grid random-albums">{discoveryAlbums.slice(0, 12).map(a => <article className="random-album" key={a.album + "|" + a.album_artist}>
                     <button className="album-card" onClick={() => { setAlbum(a); navigate("album"); }}><Cover cover={a.cover} title={a.album} /><strong>{a.album}</strong><small>{a.artist} · {a.count} 首</small></button>
                     <div><button className="secondary" disabled={featuredBusy} onClick={() => void queueAlbum(a, "replace")}>替换并播放</button><button className="secondary" disabled={featuredBusy} onClick={() => void queueAlbum(a, "append")}>追加队尾</button></div>
                   </article>)}</div>
@@ -1883,6 +1917,7 @@ function App() {
           </div>
         </div>
         <div className="player-options">
+          <button className={'icon-button lyrics-toggle ' + (lyricsOpen ? 'enabled' : '')} title="显示歌词" aria-label="显示歌词" aria-pressed={lyricsOpen} disabled={!current} onClick={() => { setLyricsOpen(!lyricsOpen); setQueueOpen(false); }}>词</button>
           {isNative ? <NativeOutput /> : <AudioOutput audio={audio} />}
           <select
             aria-label="音源质量"
@@ -1917,6 +1952,7 @@ function App() {
             onClick={() => {
               setQueuePage(Math.floor(index / 100));
               setQueueOpen(!queueOpen);
+              setLyricsOpen(false);
             }}
           >
             <ListMusic size={21} />
@@ -1987,6 +2023,7 @@ function App() {
           } else notify("音源播放失败，请在管理页检查扫描记录或尝试原音");
         }}
       />
+      {lyricsOpen && current && <LyricsPanel key={current.id} id={current.id} title={current.title} position={position} onClose={() => setLyricsOpen(false)} />}
       {queueOpen && (
         <div className="queue-panel">
           <div className="panel-title">
@@ -2024,14 +2061,16 @@ function App() {
             <span>已选 {selectedQueueTracks.length} 首</span>
             <button className="text-button" disabled={!selectedQueueTracks.length} onClick={() => setAddTracks(selectedQueueTracks)}><ListMusic size={15} />加入歌单</button>
           </div>
-          <div className="queue-scroll">
+          <div className="queue-scroll" data-reorder-group="queue">
             {queue.slice(queuePage * 100, queuePage * 100 + 100).map((t, j) => {
               const i = queuePage * 100 + j;
               return (
                 <div
                   className={"queue-item " + (i === index ? "active" : "")}
                   key={t.id + i}
+                  data-reorder-index={i}
                 >
+                  <ReorderHandle index={i} count={queue.length} onMove={reorderQueue} />
                   <input type="checkbox" aria-label={`选择队列歌曲 ${t.title}`} checked={queueSelection.has(t.id)} onChange={e => {
                     const checked = e.target.checked;
                     setQueueSelection(previous => { const next = new Set(previous); if (checked) next.add(t.id); else next.delete(t.id); return next; });
@@ -2112,7 +2151,12 @@ function App() {
             </div>
             <dl>
               <dt>专辑</dt>
-              <dd>{detail.album}</dd>
+              <dd><button className="detail-album-link" title="在文件夹中打开专辑目录" onClick={() => {
+                const targetFolder = detail.folder;
+                navigate('folders');
+                setFolder(targetFolder);
+                setDetail(null);
+              }}><Folder size={16} /><span>{detail.album || '打开所在目录'}</span><ChevronRight size={16} /></button></dd>
               <dt>流派 / 年份</dt>
               <dd>
                 {detail.genre || "未标注"} / {detail.year || "未知"}
@@ -2156,10 +2200,10 @@ function App() {
             {Object.keys(detail.ai_tags).length ? (
               <div className="tag-cloud">
                 {Object.entries(detail.ai_tags)
-                  .filter(([k]) => !["source", "version", "basis"].includes(k))
+                  .filter(([k]) => !["source", "version", "basis", "taxonomy_version", "previous_reason"].includes(k))
                   .map(([k, v]) => (
                     <span key={k}>
-                      {k}: {Array.isArray(v) ? v.join(" / ") : String(v)}
+                      {({ styles: '风格', moods: '情感', scenes: '场景', instruments: '乐器', language: '语种', vocal: '人声', confidence: '置信度', reason: '依据', unresolved: '待确认' } as Record<string, string>)[k] || k}: {Array.isArray(v) ? v.map(value => k === 'unresolved' ? ({ styles: '风格', moods: '情感', instruments: '乐器', language: '语种', vocal: '人声' } as Record<string, string>)[String(value)] || value : value).join(' / ') : String(v)}
                     </span>
                   ))}
               </div>

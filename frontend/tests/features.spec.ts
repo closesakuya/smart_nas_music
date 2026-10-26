@@ -150,6 +150,6 @@ test("AI browse scope, batch queue actions, playlist picker and Shuffle", async 
   await expect(page.getByRole("status").filter({ hasText: "Shuffle" })).toBeVisible();
   await page.locator("audio").evaluate((el: HTMLAudioElement) => el.pause());
   const beforeRefresh = await page.locator(".shuffle-phrases button").allTextContents();
-  await page.getByTitle("刷新页面数据").click();
+  await page.getByTitle("刷新灵感短语").click();
   expect(await page.locator(".shuffle-phrases button").allTextContents()).not.toEqual(beforeRefresh);
 });
